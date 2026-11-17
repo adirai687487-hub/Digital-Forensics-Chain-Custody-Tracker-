@@ -69,7 +69,9 @@ export const ChainOfCustodyView: React.FC<ChainOfCustodyViewProps> = ({
     setAppendSuccess(null);
   };
 
-  const handleAppendSubmit = (e: React.FormEvent) => {
+  const [isAppending, setIsAppending] = useState(false);
+
+  const handleAppendSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setAppendError(null);
 
@@ -79,25 +81,32 @@ export const ChainOfCustodyView: React.FC<ChainOfCustodyViewProps> = ({
       return;
     }
 
-    const result = appendCustodyEvent({
-      evidenceId: formEvidenceId,
-      action: formAction,
-      fromInvestigator: formFrom.trim(),
-      toInvestigator: formTo.trim(),
-      purpose: formPurpose.trim(),
-      location: formLocation.trim(),
-      hashAtEvent: targetEvidence.originalHash,
-      notes: formNotes.trim(),
-    });
+    setIsAppending(true);
+    try {
+      const result = await appendCustodyEvent({
+        evidenceId: formEvidenceId,
+        action: formAction,
+        fromInvestigator: formFrom.trim(),
+        toInvestigator: formTo.trim(),
+        purpose: formPurpose.trim(),
+        location: formLocation.trim(),
+        hashAtEvent: targetEvidence.originalHash,
+        notes: formNotes.trim(),
+      });
 
-    if (result.success) {
-      setAppendSuccess(`Custody event ${result.eventId} successfully appended to the chronological Linked List!`);
-      setTimeout(() => {
-        setShowAppendModal(false);
-        setAppendSuccess(null);
-      }, 1500);
-    } else {
-      setAppendError(result.error || 'Failed to append custody event.');
+      if (result.success) {
+        setAppendSuccess(`Custody event ${result.eventId} successfully appended to the chronological Linked List & Firestore!`);
+        setTimeout(() => {
+          setShowAppendModal(false);
+          setAppendSuccess(null);
+        }, 1500);
+      } else {
+        setAppendError(result.error || 'Failed to append custody event.');
+      }
+    } catch (err: any) {
+      setAppendError(`Failed to append event: ${err.message}`);
+    } finally {
+      setIsAppending(false);
     }
   };
 

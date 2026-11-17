@@ -65,6 +65,9 @@ export const AddEvidenceView: React.FC<AddEvidenceViewProps> = ({ onNavigate }) 
     if (!name) {
       setName(file.name);
     }
+    if (file.name.toLowerCase().endsWith('.txt')) {
+      setType('Text File');
+    }
     setFileSizeBytes(file.size);
 
     try {
@@ -96,8 +99,17 @@ export const AddEvidenceView: React.FC<AddEvidenceViewProps> = ({ onNavigate }) 
   };
 
   // Generate a test mock hash using text string hashing
-  const handleQuickTemplate = (templateType: 'disk' | 'memory' | 'log') => {
-    if (templateType === 'disk') {
+  const handleQuickTemplate = (templateType: 'disk' | 'memory' | 'log' | 'text') => {
+    if (templateType === 'text') {
+      setName('academic_interview_transcript.txt');
+      setType('Text File');
+      setFileSizeBytes(14500);
+      setNotes('Academic demo evidence: Raw ASCII/UTF-8 investigator interview transcript text file.');
+      hashString(`academic_interview_transcript_${Date.now()}`).then(h => {
+        setOriginalHash(h);
+        setHashCalculationMethod('Calculated via Web Crypto API (SHA-256 baseline template)');
+      });
+    } else if (templateType === 'disk') {
       setName('workstation_ssd_image.dd');
       setType('Disk Image');
       setFileSizeBytes(256000000000);
@@ -127,7 +139,9 @@ export const AddEvidenceView: React.FC<AddEvidenceViewProps> = ({ onNavigate }) 
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setSuccess(null);
@@ -142,39 +156,46 @@ export const AddEvidenceView: React.FC<AddEvidenceViewProps> = ({ onNavigate }) 
       return;
     }
 
-    const result = addEvidence(
-      {
-        id: evidenceId.trim(),
-        caseId: caseId.trim(),
-        caseName: caseName.trim(),
-        name: name.trim(),
-        type,
-        originalHash: originalHash.trim().toLowerCase(),
-        hashAlgorithm: 'SHA-256',
-        fileSizeBytes,
-        collectionTimestamp: new Date(collectionTimestamp).toISOString(),
-        collectionLocation: collectionLocation.trim(),
-        investigatorName: investigatorName.trim(),
-        investigatorBadge: investigatorBadge.trim(),
-        seizureAuthority: seizureAuthority.trim(),
-        storageLocation: storageLocation.trim(),
-        currentCustodian: currentCustodian.trim(),
-        notes: notes.trim(),
-      },
-      currentCustodian.trim(),
-      storageLocation.trim()
-    );
+    setIsSubmitting(true);
+    try {
+      const result = await addEvidence(
+        {
+          id: evidenceId.trim(),
+          caseId: caseId.trim(),
+          caseName: caseName.trim(),
+          name: name.trim(),
+          type,
+          originalHash: originalHash.trim().toLowerCase(),
+          hashAlgorithm: 'SHA-256',
+          fileSizeBytes,
+          collectionTimestamp: new Date(collectionTimestamp).toISOString(),
+          collectionLocation: collectionLocation.trim(),
+          investigatorName: investigatorName.trim(),
+          investigatorBadge: investigatorBadge.trim(),
+          seizureAuthority: seizureAuthority.trim(),
+          storageLocation: storageLocation.trim(),
+          currentCustodian: currentCustodian.trim(),
+          notes: notes.trim(),
+        },
+        currentCustodian.trim(),
+        storageLocation.trim()
+      );
 
-    if (result.success) {
-      setSuccess(`Evidence ${evidenceId} successfully cataloged and indexed into the in-memory BST! Initial custody node appended to the chronological Linked List.`);
-      // Reset evidence ID for next entry
-      setEvidenceId(`EVD-${new Date().getFullYear()}-${(evidences.length + 102).toString()}`);
-      setName('');
-      setOriginalHash('');
-      setFileSizeBytes(0);
-      setUploadedFileName('');
-    } else {
-      setError(result.error || 'Failed to add evidence.');
+      if (result.success) {
+        setSuccess(`Evidence ${evidenceId} successfully cataloged, saved, and indexed into the in-memory BST! Initial custody node appended to the chronological Linked List.`);
+        // Reset evidence ID for next entry
+        setEvidenceId(`EVD-${new Date().getFullYear()}-${(evidences.length + 102).toString()}`);
+        setName('');
+        setOriginalHash('');
+        setFileSizeBytes(0);
+        setUploadedFileName('');
+      } else {
+        setError(result.error || 'Failed to add evidence.');
+      }
+    } catch (err: any) {
+      setError(`Failed to save evidence: ${err.message}`);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -193,8 +214,15 @@ export const AddEvidenceView: React.FC<AddEvidenceViewProps> = ({ onNavigate }) 
         </div>
 
         {/* Quick Forensic Templates */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="text-xs text-slate-400">Autofill:</span>
+          <button
+            type="button"
+            onClick={() => handleQuickTemplate('text')}
+            className="px-2.5 py-1 text-xs bg-cyan-950/60 hover:bg-cyan-900/60 text-cyan-300 border border-cyan-700/60 rounded transition-colors font-medium"
+          >
+            Text File (.txt)
+          </button>
           <button
             type="button"
             onClick={() => handleQuickTemplate('disk')}
@@ -394,6 +422,7 @@ export const AddEvidenceView: React.FC<AddEvidenceViewProps> = ({ onNavigate }) 
               onChange={e => setType(e.target.value as EvidenceType)}
               className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-cyan-500"
             >
+              <option value="Text File">Text File (.txt)</option>
               <option value="Disk Image">Disk Image (.dd, .e01, .raw)</option>
               <option value="Memory Dump">Memory Dump (.raw, .vmem, .dmp)</option>
               <option value="Network PCAP">Network PCAP (.pcap, .pcapng)</option>

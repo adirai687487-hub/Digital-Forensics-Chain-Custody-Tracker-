@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   FileBox,
   Link2,
@@ -11,7 +11,11 @@ import {
   HardDrive,
   Cpu,
   Clock,
-  UserCheck,
+  Cloud,
+  CloudCheck,
+  UploadCloud,
+  LogIn,
+  RefreshCw,
 } from 'lucide-react';
 import { useForensics } from '../../context/ForensicsContext';
 import { truncateHash, formatBytes } from '../../utils/crypto';
@@ -21,7 +25,21 @@ interface DashboardViewProps {
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
-  const { evidences, custodyEvents, verificationLogs, bstInstance } = useForensics();
+  const {
+    evidences,
+    custodyEvents,
+    verificationLogs,
+    bstInstance,
+    user,
+    isCloudMode,
+    signInWithGoogle,
+    seedCloudWithDemoData,
+    cloudSyncLoading,
+    syncError,
+  } = useForensics();
+
+  const [seeding, setSeeding] = useState(false);
+  const [seedMessage, setSeedMessage] = useState<string | null>(null);
 
   // Metric Computations
   const totalEvidence = evidences.length;
@@ -30,7 +48,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
 
   const verifiedCount = evidences.filter(e => e.lastVerificationStatus === 'VERIFIED').length;
   const tamperedCount = evidences.filter(e => e.lastVerificationStatus === 'TAMPERED').length;
-  const unverifiedCount = evidences.filter(e => e.lastVerificationStatus === 'UNVERIFIED' || !e.lastVerificationStatus).length;
+  const unverifiedCount = evidences.filter(
+    e => e.lastVerificationStatus === 'UNVERIFIED' || !e.lastVerificationStatus
+  ).length;
 
   const totalBytes = evidences.reduce((acc, curr) => acc + (curr.fileSizeBytes || 0), 0);
 
@@ -47,9 +67,21 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
   // Recent custody events (last 5)
   const recentEvents = [...custodyEvents].reverse().slice(0, 5);
 
+  const handleSeed = async () => {
+    setSeeding(true);
+    setSeedMessage(null);
+    const res = await seedCloudWithDemoData();
+    setSeeding(false);
+    if (res.success) {
+      setSeedMessage('University demo forensic records successfully uploaded to Cloud Firestore!');
+    } else {
+      setSeedMessage(`Error: ${res.error}`);
+    }
+  };
+
   return (
     <div className="space-y-6">
-      {/* Top Banner / Disclaimer */}
+      {/* Top Banner: Academic Platform & Cloud Status */}
       <div className="p-4 rounded-lg bg-cyan-950/30 border border-cyan-800/40 text-slate-300 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
@@ -57,20 +89,22 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
               Academic Research Defense Platform
             </span>
             <span className="text-slate-600">·</span>
-            <span className="text-xs text-slate-400">DSA Engineering Demonstration</span>
+            <span className="text-xs text-slate-400 font-mono">
+              {user ? 'Cloud Firestore Backend Active' : 'Offline / Demo Mode'}
+            </span>
           </div>
           <h1 className="text-lg md:text-xl font-bold text-white mt-1">
             DSL — Digital Forensics Chain of Custody Tracker
           </h1>
           <p className="text-xs text-slate-400 mt-0.5">
-            Evidence Integrity & Investigation Management System powered by Linked Lists, Binary Search Trees, and Hierarchical Tree Traversals.
+            Evidence Integrity & Investigation Management System powered by Cloud Firestore, Linked Lists, Binary Search Trees, and Hierarchical Tree Traversals.
           </p>
         </div>
 
         <div className="flex items-center gap-2.5 shrink-0">
           <button
             onClick={() => onNavigate('add')}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-950 bg-cyan-400 hover:bg-cyan-300 rounded transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-950 bg-cyan-400 hover:bg-cyan-300 rounded transition-colors shadow-sm"
           >
             <PlusCircle className="w-3.5 h-3.5" />
             <span>Intake Evidence</span>
@@ -84,6 +118,66 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
           </button>
         </div>
       </div>
+
+      {/* Cloud Authentication & Sync Notice */}
+      {syncError && (
+        <div className="p-3.5 rounded-lg bg-rose-950/40 border border-rose-800 text-rose-200 text-xs flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+            <span>{syncError}</span>
+          </div>
+        </div>
+      )}
+
+      {user ? (
+        <div className="p-3.5 rounded-lg bg-emerald-950/30 border border-emerald-800/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2.5">
+            <Cloud className="w-4 h-4 text-emerald-400 shrink-0" />
+            <div>
+              <span className="font-semibold text-emerald-300">
+                Connected to Cloud Firestore as {user.displayName || user.email}
+              </span>
+              <span className="text-slate-400 block text-[11px]">
+                Zero-Trust Security Rules active · Records scoped to your authenticated UID ({user.uid.slice(0, 8)}...)
+              </span>
+            </div>
+          </div>
+
+          {evidences.length === 0 && (
+            <button
+              onClick={handleSeed}
+              disabled={seeding}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-500/40 rounded transition-colors whitespace-nowrap self-start sm:self-auto"
+            >
+              <UploadCloud className="w-3.5 h-3.5" />
+              <span>{seeding ? 'Seeding Firestore...' : 'Populate Cloud with Demo Records'}</span>
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="p-3.5 rounded-lg bg-slate-900 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2 text-slate-300">
+            <Cloud className="w-4 h-4 text-cyan-400 shrink-0" />
+            <span>
+              Sign in with Google to enable real-time Cloud Firestore synchronization and secure multi-user custody tracking.
+            </span>
+          </div>
+          <button
+            onClick={() => signInWithGoogle()}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-950 bg-cyan-400 hover:bg-cyan-300 rounded transition-colors whitespace-nowrap self-start sm:self-auto"
+          >
+            <LogIn className="w-3.5 h-3.5" />
+            <span>Sign in with Google</span>
+          </button>
+        </div>
+      )}
+
+      {seedMessage && (
+        <div className="p-3 rounded-lg bg-emerald-950/40 border border-emerald-700 text-emerald-300 text-xs flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 shrink-0" />
+          <span>{seedMessage}</span>
+        </div>
+      )}
 
       {/* KPI Stats Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -180,17 +274,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
             </div>
 
             <div className="divide-y divide-slate-800/60 mt-2">
-              {casesList.map(c => (
-                <div key={c.id} className="py-2.5 flex items-center justify-between text-xs">
-                  <div>
-                    <div className="font-medium text-slate-200">{c.name}</div>
-                    <div className="text-[11px] text-slate-400 font-mono">{c.id}</div>
-                  </div>
-                  <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-slate-800 text-slate-300">
-                    {c.count} items
-                  </span>
+              {casesList.length === 0 ? (
+                <div className="py-6 text-center text-xs text-slate-500">
+                  No cases cataloged yet.
                 </div>
-              ))}
+              ) : (
+                casesList.map(c => (
+                  <div key={c.id} className="py-2.5 flex items-center justify-between text-xs">
+                    <div>
+                      <div className="font-medium text-slate-200">{c.name}</div>
+                      <div className="text-[11px] text-slate-400 font-mono">{c.id}</div>
+                    </div>
+                    <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-slate-800 text-slate-300">
+                      {c.count} items
+                    </span>
+                  </div>
+                ))
+              )}
             </div>
           </div>
 
@@ -207,7 +307,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
             <div className="mt-3.5 space-y-2">
               <button
                 onClick={() => onNavigate('verify')}
-                className="w-full flex items-center justify-center gap-2 py-2 px-3 text-xs font-semibold text-slate-900 bg-cyan-400 hover:bg-cyan-300 rounded transition-colors"
+                className="w-full flex items-center justify-center gap-2 py-2 px-3 text-xs font-semibold text-slate-950 bg-cyan-400 hover:bg-cyan-300 rounded transition-colors"
               >
                 <ShieldCheck className="w-4 h-4" />
                 <span>Launch Integrity Verifier</span>
@@ -222,13 +322,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
             </div>
           </div>
 
-          {/* Forensic Standard Notice */}
+          {/* Forensic Standard & Secure Storage Notice */}
           <div className="p-3.5 rounded-lg border border-slate-800/90 bg-slate-950 text-slate-400 text-xs space-y-1">
             <div className="font-semibold text-slate-300 flex items-center gap-1.5">
-              <span>Notice on Demonstration Storage</span>
+              <span>Secure Forensic Storage Architecture</span>
             </div>
             <p className="text-[11px] leading-relaxed">
-              In real digital forensics, evidence records must reside on Write-Once-Read-Many (WORM) optical storage or hardware-secured relational databases with HSM cryptographic signing. This application uses browser localStorage strictly for demonstration purposes.
+              In real digital forensics, raw multi-gigabyte forensic disk images are never stored directly as Base64 strings in Firestore documents due to the 1MB document limit. Instead, raw bitstream images are secured in immutable, write-blocked object buckets (Cloud Storage for Firebase), while Cloud Firestore securely indexes their cryptographically verified SHA-256 digests and audit histories.
             </p>
           </div>
         </div>
@@ -253,59 +353,65 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
             </div>
 
             <div className="mt-3 space-y-3 flex-1 overflow-y-auto">
-              {recentEvents.map((evt, idx) => {
-                const isTransfer = evt.action === 'TRANSFERRED';
-                const isVerified = evt.action === 'VERIFIED';
-                const isCollected = evt.action === 'COLLECTED';
+              {recentEvents.length === 0 ? (
+                <div className="py-12 text-center text-xs text-slate-500">
+                  No custody events recorded yet.
+                </div>
+              ) : (
+                recentEvents.map(evt => {
+                  const isTransfer = evt.action === 'TRANSFERRED';
+                  const isVerified = evt.action === 'VERIFIED';
+                  const isCollected = evt.action === 'COLLECTED';
 
-                return (
-                  <div
-                    key={evt.id}
-                    className="p-3 rounded border border-slate-800 bg-slate-950/60 relative group hover:border-slate-700 transition-colors"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`text-[10px] font-semibold px-2 py-0.5 rounded font-mono ${
-                            isCollected
-                              ? 'bg-blue-900/40 text-blue-300 border border-blue-700/50'
-                              : isTransfer
-                              ? 'bg-amber-900/40 text-amber-300 border border-amber-700/50'
-                              : isVerified
-                              ? 'bg-emerald-900/40 text-emerald-300 border border-emerald-700/50'
-                              : 'bg-purple-900/40 text-purple-300 border border-purple-700/50'
-                          }`}
-                        >
-                          {evt.action}
-                        </span>
-                        <span className="text-xs font-semibold text-slate-200">
-                          {evt.evidenceName || evt.evidenceId}
+                  return (
+                    <div
+                      key={evt.id}
+                      className="p-3 rounded border border-slate-800 bg-slate-950/60 relative group hover:border-slate-700 transition-colors"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`text-[10px] font-semibold px-2 py-0.5 rounded font-mono ${
+                              isCollected
+                                ? 'bg-blue-900/40 text-blue-300 border border-blue-700/50'
+                                : isTransfer
+                                ? 'bg-amber-900/40 text-amber-300 border border-amber-700/50'
+                                : isVerified
+                                ? 'bg-emerald-900/40 text-emerald-300 border border-emerald-700/50'
+                                : 'bg-purple-900/40 text-purple-300 border border-purple-700/50'
+                            }`}
+                          >
+                            {evt.action}
+                          </span>
+                          <span className="text-xs font-semibold text-slate-200">
+                            {evt.evidenceName || evt.evidenceId}
+                          </span>
+                        </div>
+                        <span className="text-[11px] font-mono text-slate-400 whitespace-nowrap">
+                          {new Date(evt.timestamp).toLocaleString(undefined, {
+                            month: 'short',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
                         </span>
                       </div>
-                      <span className="text-[11px] font-mono text-slate-400 whitespace-nowrap">
-                        {new Date(evt.timestamp).toLocaleString(undefined, {
-                          month: 'short',
-                          day: 'numeric',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                      </span>
-                    </div>
 
-                    <p className="text-xs text-slate-300 mt-2 leading-relaxed">{evt.purpose}</p>
+                      <p className="text-xs text-slate-300 mt-2 leading-relaxed">{evt.purpose}</p>
 
-                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-400 mt-2 pt-2 border-t border-slate-800/60 font-mono">
-                      <span>Custodian: {evt.toInvestigator}</span>
-                      <span>·</span>
-                      <span>Loc: {evt.location}</span>
-                      <span>·</span>
-                      <span title={evt.hashAtEvent}>
-                        SHA-256: {truncateHash(evt.hashAtEvent, 6, 6)}
-                      </span>
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-400 mt-2 pt-2 border-t border-slate-800/60 font-mono">
+                        <span>Custodian: {evt.toInvestigator}</span>
+                        <span>·</span>
+                        <span>Loc: {evt.location}</span>
+                        <span>·</span>
+                        <span title={evt.hashAtEvent}>
+                          SHA-256: {truncateHash(evt.hashAtEvent, 6, 6)}
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </div>
 
             <div className="pt-3 border-t border-slate-800 mt-3 flex items-center justify-between text-xs text-slate-400">

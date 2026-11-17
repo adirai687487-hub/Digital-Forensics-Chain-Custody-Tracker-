@@ -1,10 +1,20 @@
 /**
- * Forensics & DSA Application Context
- * Manages forensic evidence lifecycle, chain-of-custody linked list, in-memory BST,
- * and recursive evidence trees with persistent state.
+ * Forensics & DSA Application Context with Firebase Authentication & Cloud Firestore Backend
+ * Supports both Live Cloud Firestore persistence and Academic Demo Mode.
  */
 
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
+import { User, onAuthStateChanged } from 'firebase/auth';
+import {
+  collection,
+  query,
+  where,
+  onSnapshot,
+  setDoc,
+  doc,
+  updateDoc,
+  getDocs,
+} from 'firebase/firestore';
 import {
   Evidence,
   CustodyEvent,
@@ -23,55 +33,77 @@ import { CustodyLinkedList } from '../dsa/LinkedList';
 import { BinarySearchTree } from '../dsa/BinarySearchTree';
 import { EvidenceTreeManager } from '../dsa/EvidenceTree';
 import { compareHashes } from '../utils/crypto';
+import {
+  auth,
+  db,
+  signInWithGoogle as authSignInWithGoogle,
+  signOutUser as authSignOutUser,
+  handleFirestoreError,
+  testConnection,
+  OperationType,
+} from '../lib/firebase';
 
 interface ForensicsContextType {
+  // Authentication & Cloud Sync
+  user: User | null;
+  authLoading: boolean;
+  isCloudMode: boolean;
+  setIsCloudMode: (active: boolean) => void;
+  signInWithGoogle: () => Promise<void>;
+  signOut: () => Promise<void>;
+  firestoreConnected: boolean;
+  cloudSyncLoading: boolean;
+  syncError: string | null;
+  seedCloudWithDemoData: () => Promise<{ success: boolean; error?: string }>;
+
+  // Data
   evidences: Evidence[];
   custodyEvents: CustodyEvent[];
   evidenceTree: EvidenceTreeNode;
   verificationLogs: VerificationLog[];
-  
+
   // Data structures
   bstInstance: BinarySearchTree;
   linkedListInstance: CustodyLinkedList;
-  
+
   // Actions
   addEvidence: (
     evidence: Omit<Evidence, 'isFictionalDemo' | 'lastVerificationStatus'>,
     initialCustodian: string,
     initialLocation: string
-  ) => { success: boolean; error?: string };
-  
+  ) => Promise<{ success: boolean; error?: string }>;
+
   appendCustodyEvent: (
     event: Omit<CustodyEvent, 'id' | 'timestamp' | 'previousEventId'>
-  ) => { success: boolean; eventId?: string; error?: string };
-  
+  ) => Promise<{ success: boolean; eventId?: string; error?: string }>;
+
   verifyEvidenceIntegrity: (
     evidenceId: string,
     computedHash: string,
     comparisonSource: string,
     examiner: string
-  ) => {
+  ) => Promise<{
     isMatch: boolean;
     status: VerificationStatus;
     storedHash: string;
     computedHash: string;
     logId: string;
-  };
-  
+  }>;
+
   searchByHashInBST: (targetHash: string) => {
     matches: Evidence[];
     steps: BSTSearchStep[];
     comparisons: number;
     found: boolean;
   };
-  
+
   searchAll: (query: string) => Evidence[];
-  
+
   addTreeNode: (
     parentId: string,
     node: Omit<EvidenceTreeNode, 'id' | 'children'>
   ) => boolean;
-  
+
   resetToDemoData: () => void;
   clearAllData: () => void;
   exportDatabaseJson: () => string;
@@ -83,54 +115,227 @@ const STORAGE_KEYS = {
   CUSTODY: 'dsl_dfir_custody_v1',
   TREE: 'dsl_dfir_tree_v1',
   VERIFICATIONS: 'dsl_dfir_verifications_v1',
+  CLOUD_MODE: 'dsl_dfir_cloud_mode_v1',
 };
 
 const ForensicsContext = createContext<ForensicsContextType | undefined>(undefined);
 
 export const ForensicsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Persistent state initialized from localStorage with demo fallbacks
-  const [evidences, setEvidences] = useState<Evidence[]>(() => {
+  // Auth state
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [firestoreConnected, setFirestoreConnected] = useState(false);
+  const [cloudSyncLoading, setCloudSyncLoading] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+
+  // Cloud Mode state (defaults to true if user is logged in, or local demo mode if logged out)
+  const [isCloudMode, setIsCloudModeState] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.CLOUD_MODE);
+      return saved !== null ? JSON.parse(saved) : true;
+    } catch {
+      return true;
+    }
+  });
+
+  const setIsCloudMode = (val: boolean) => {
+    setIsCloudModeState(val);
+    try {
+      localStorage.setItem(STORAGE_KEYS.CLOUD_MODE, JSON.stringify(val));
+    } catch (e) {
+      console.warn('LocalStorage save failed for cloud mode', e);
+    }
+  };
+
+  // Local state fallback / demo data
+  const [localEvidences, setLocalEvidences] = useState<Evidence[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.EVIDENCES);
       return saved ? JSON.parse(saved) : INITIAL_EVIDENCES;
-    } catch (e) {
-      console.warn('Failed to load evidences from localStorage', e);
+    } catch {
       return INITIAL_EVIDENCES;
     }
   });
 
-  const [custodyEvents, setCustodyEvents] = useState<CustodyEvent[]>(() => {
+  const [localCustodyEvents, setLocalCustodyEvents] = useState<CustodyEvent[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.CUSTODY);
       return saved ? JSON.parse(saved) : INITIAL_CUSTODY_EVENTS;
-    } catch (e) {
-      console.warn('Failed to load custody from localStorage', e);
+    } catch {
       return INITIAL_CUSTODY_EVENTS;
     }
   });
 
-  const [evidenceTree, setEvidenceTree] = useState<EvidenceTreeNode>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.TREE);
-      return saved ? JSON.parse(saved) : INITIAL_EVIDENCE_TREE;
-    } catch (e) {
-      console.warn('Failed to load tree from localStorage', e);
-      return INITIAL_EVIDENCE_TREE;
-    }
-  });
-
-  const [verificationLogs, setVerificationLogs] = useState<VerificationLog[]>(() => {
+  const [localVerificationLogs, setLocalVerificationLogs] = useState<VerificationLog[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.VERIFICATIONS);
       return saved ? JSON.parse(saved) : INITIAL_VERIFICATION_LOGS;
-    } catch (e) {
-      console.warn('Failed to load verifications from localStorage', e);
+    } catch {
       return INITIAL_VERIFICATION_LOGS;
     }
   });
 
+  // Cloud Firestore state
+  const [cloudEvidences, setCloudEvidences] = useState<Evidence[]>([]);
+  const [cloudCustodyEvents, setCloudCustodyEvents] = useState<CustodyEvent[]>([]);
+  const [cloudVerificationLogs, setCloudVerificationLogs] = useState<VerificationLog[]>([]);
+
+  // Tree state (local or cloud)
+  const [evidenceTree, setEvidenceTree] = useState<EvidenceTreeNode>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.TREE);
+      return saved ? JSON.parse(saved) : INITIAL_EVIDENCE_TREE;
+    } catch {
+      return INITIAL_EVIDENCE_TREE;
+    }
+  });
+
+  // Decide active data based on whether user is logged in and isCloudMode is true
+  const useCloudData = isCloudMode && user !== null;
+  const evidences = useCloudData ? cloudEvidences : localEvidences;
+  const custodyEvents = useCloudData ? cloudCustodyEvents : localCustodyEvents;
+  const verificationLogs = useCloudData ? cloudVerificationLogs : localVerificationLogs;
+
+  // Initialize and validate Firestore connection on mount
+  useEffect(() => {
+    testConnection().then(connected => {
+      setFirestoreConnected(connected);
+    });
+  }, []);
+
+  // Monitor Firebase Auth state
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async currentUser => {
+      setUser(currentUser);
+      setAuthLoading(false);
+      setSyncError(null);
+
+      if (currentUser) {
+        setIsCloudMode(true);
+        // Ensure user profile document exists in Firestore
+        try {
+          const userRef = doc(db, 'users', currentUser.uid);
+          await setDoc(
+            userRef,
+            {
+              uid: currentUser.uid,
+              email: currentUser.email || 'anonymous',
+              displayName: currentUser.displayName || 'Forensic Examiner',
+              updatedAt: new Date().toISOString(),
+            },
+            { merge: true }
+          );
+        } catch (err) {
+          console.warn('Could not update user profile doc:', err);
+        }
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Listen to Firestore updates when user is authenticated and cloud mode is active
+  useEffect(() => {
+    if (!user || !isCloudMode) {
+      return;
+    }
+
+    setCloudSyncLoading(true);
+    setSyncError(null);
+
+    // 1. Evidence Query
+    const evidencePath = 'evidence';
+    const evidenceQuery = query(
+      collection(db, evidencePath),
+      where('ownerUid', '==', user.uid)
+    );
+
+    const unsubEvidence = onSnapshot(
+      evidenceQuery,
+      snapshot => {
+        const loaded: Evidence[] = [];
+        snapshot.forEach(docSnap => {
+          loaded.push(docSnap.data() as Evidence);
+        });
+        setCloudEvidences(loaded);
+        setCloudSyncLoading(false);
+      },
+      error => {
+        setCloudSyncLoading(false);
+        setSyncError(`Error syncing evidence from Firestore: ${error.message}`);
+        try {
+          handleFirestoreError(error, OperationType.LIST, evidencePath);
+        } catch (e) {
+          // Handled
+        }
+      }
+    );
+
+    // 2. Custody Events Query
+    const custodyPath = 'custody_events';
+    const custodyQuery = query(
+      collection(db, custodyPath),
+      where('ownerUid', '==', user.uid)
+    );
+
+    const unsubCustody = onSnapshot(
+      custodyQuery,
+      snapshot => {
+        const loaded: CustodyEvent[] = [];
+        snapshot.forEach(docSnap => {
+          loaded.push(docSnap.data() as CustodyEvent);
+        });
+        // Sort chronologically
+        loaded.sort(
+          (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+        );
+        setCloudCustodyEvents(loaded);
+      },
+      error => {
+        try {
+          handleFirestoreError(error, OperationType.LIST, custodyPath);
+        } catch (e) {
+          // Handled
+        }
+      }
+    );
+
+    // 3. Verification Logs Query
+    const verifPath = 'verification_logs';
+    const verifQuery = query(
+      collection(db, verifPath),
+      where('ownerUid', '==', user.uid)
+    );
+
+    const unsubVerif = onSnapshot(
+      verifQuery,
+      snapshot => {
+        const loaded: VerificationLog[] = [];
+        snapshot.forEach(docSnap => {
+          loaded.push(docSnap.data() as VerificationLog);
+        });
+        loaded.sort(
+          (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+        );
+        setCloudVerificationLogs(loaded);
+      },
+      error => {
+        try {
+          handleFirestoreError(error, OperationType.LIST, verifPath);
+        } catch (e) {
+          // Handled
+        }
+      }
+    );
+
+    return () => {
+      unsubEvidence();
+      unsubCustody();
+      unsubVerif();
+    };
+  }, [user, isCloudMode]);
+
   // Rebuild the in-memory Binary Search Tree from the current evidences list
-  // Meets requirement: "Rebuild the in-memory BST from saved records after reload."
   const bstInstance = useMemo(() => {
     return BinarySearchTree.rebuildFromEvidences(evidences);
   }, [evidences]);
@@ -140,22 +345,36 @@ export const ForensicsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return CustodyLinkedList.fromArray(custodyEvents);
   }, [custodyEvents]);
 
-  // Save to localStorage whenever state changes
+  // LocalStorage sync for offline / demo mode
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.EVIDENCES, JSON.stringify(evidences));
-    } catch (e) {
-      console.warn('LocalStorage save failed for evidences', e);
+    if (!useCloudData) {
+      try {
+        localStorage.setItem(STORAGE_KEYS.EVIDENCES, JSON.stringify(localEvidences));
+      } catch (e) {
+        console.warn('LocalStorage save failed for evidences', e);
+      }
     }
-  }, [evidences]);
+  }, [localEvidences, useCloudData]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.CUSTODY, JSON.stringify(custodyEvents));
-    } catch (e) {
-      console.warn('LocalStorage save failed for custody', e);
+    if (!useCloudData) {
+      try {
+        localStorage.setItem(STORAGE_KEYS.CUSTODY, JSON.stringify(localCustodyEvents));
+      } catch (e) {
+        console.warn('LocalStorage save failed for custody', e);
+      }
     }
-  }, [custodyEvents]);
+  }, [localCustodyEvents, useCloudData]);
+
+  useEffect(() => {
+    if (!useCloudData) {
+      try {
+        localStorage.setItem(STORAGE_KEYS.VERIFICATIONS, JSON.stringify(localVerificationLogs));
+      } catch (e) {
+        console.warn('LocalStorage save failed for verifications', e);
+      }
+    }
+  }, [localVerificationLogs, useCloudData]);
 
   useEffect(() => {
     try {
@@ -165,22 +384,80 @@ export const ForensicsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   }, [evidenceTree]);
 
-  useEffect(() => {
+  // Auth helper methods
+  const signInWithGoogle = useCallback(async () => {
+    setSyncError(null);
     try {
-      localStorage.setItem(STORAGE_KEYS.VERIFICATIONS, JSON.stringify(verificationLogs));
-    } catch (e) {
-      console.warn('LocalStorage save failed for verifications', e);
+      await authSignInWithGoogle();
+    } catch (err: any) {
+      setSyncError(`Sign-in failed: ${err.message}`);
+      throw err;
     }
-  }, [verificationLogs]);
+  }, []);
+
+  const signOut = useCallback(async () => {
+    setSyncError(null);
+    try {
+      await authSignOutUser();
+      setIsCloudMode(false);
+    } catch (err: any) {
+      setSyncError(`Sign-out failed: ${err.message}`);
+    }
+  }, []);
+
+  /**
+   * One-click action to copy baseline university demo records into the user's Firestore cloud account
+   */
+  const seedCloudWithDemoData = useCallback(async () => {
+    if (!user) {
+      return { success: false, error: 'Please sign in with Google to seed cloud database.' };
+    }
+
+    try {
+      setCloudSyncLoading(true);
+
+      // Write each demo evidence item with ownerUid
+      for (const item of INITIAL_EVIDENCES) {
+        const itemWithUid: Evidence = {
+          ...item,
+          ownerUid: user.uid,
+          isFictionalDemo: false,
+        };
+        await setDoc(doc(db, 'evidence', item.id), itemWithUid);
+      }
+
+      // Write each demo custody event with ownerUid
+      for (const evt of INITIAL_CUSTODY_EVENTS) {
+        const evtWithUid: CustodyEvent = {
+          ...evt,
+          ownerUid: user.uid,
+        };
+        await setDoc(doc(db, 'custody_events', evt.id), evtWithUid);
+      }
+
+      // Write each demo verification log
+      for (const log of INITIAL_VERIFICATION_LOGS) {
+        const logWithUid: VerificationLog = {
+          ...log,
+          ownerUid: user.uid,
+        };
+        await setDoc(doc(db, 'verification_logs', log.id), logWithUid);
+      }
+
+      setCloudSyncLoading(false);
+      return { success: true };
+    } catch (err: any) {
+      setCloudSyncLoading(false);
+      return { success: false, error: err.message };
+    }
+  }, [user]);
 
   /**
    * Add new evidence item
-   * 1. Validates unique ID and SHA-256 format
-   * 2. Adds to evidences state
-   * 3. Creates and appends initial 'COLLECTED' custody event in Linked List
+   * Writes to Cloud Firestore if user is authenticated and cloud mode is active.
    */
   const addEvidence = useCallback(
-    (
+    async (
       evidenceData: Omit<Evidence, 'isFictionalDemo' | 'lastVerificationStatus'>,
       initialCustodian: string,
       initialLocation: string
@@ -203,11 +480,12 @@ export const ForensicsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         ...evidenceData,
         id: cleanId,
         originalHash: cleanHash,
-        isFictionalDemo: true, // Clearly labeled fictional demo data
+        isFictionalDemo: !useCloudData,
+        ownerUid: user?.uid,
         lastVerificationStatus: 'UNVERIFIED',
       };
 
-      // Generate initial intake custody event
+      // Initial intake custody event
       const initialEventId = `EVT-${Date.now().toString().slice(-6)}`;
       const initialEvent: CustodyEvent = {
         id: initialEventId,
@@ -221,29 +499,40 @@ export const ForensicsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         timestamp: evidenceData.collectionTimestamp || new Date().toISOString(),
         hashAtEvent: cleanHash,
         previousEventId: null,
+        ownerUid: user?.uid,
         notes: evidenceData.notes || 'Evidence received into initial custody.',
       };
 
-      setEvidences(prev => [newEvidence, ...prev]);
-      setCustodyEvents(prev => [...prev, initialEvent]);
-
-      return { success: true };
+      if (useCloudData && user) {
+        // Save to Firestore
+        try {
+          await setDoc(doc(db, 'evidence', cleanId), newEvidence);
+          await setDoc(doc(db, 'custody_events', initialEventId), initialEvent);
+          return { success: true };
+        } catch (err: any) {
+          handleFirestoreError(err, OperationType.CREATE, `evidence/${cleanId}`);
+        }
+      } else {
+        // Save to local state
+        setLocalEvidences(prev => [newEvidence, ...prev]);
+        setLocalCustodyEvents(prev => [...prev, initialEvent]);
+        return { success: true };
+      }
     },
-    [evidences]
+    [evidences, useCloudData, user]
   );
 
   /**
    * Append a new custody event (TRANSFER, ANALYZE, VERIFY, etc.)
-   * Append-only: historical events are preserved permanently.
+   * Strictly append-only: historical events are preserved permanently.
    */
   const appendCustodyEvent = useCallback(
-    (eventData: Omit<CustodyEvent, 'id' | 'timestamp' | 'previousEventId'>) => {
+    async (eventData: Omit<CustodyEvent, 'id' | 'timestamp' | 'previousEventId'>) => {
       const targetEvidence = evidences.find(e => e.id === eventData.evidenceId);
       if (!targetEvidence) {
         return { success: false, error: `Target evidence item ${eventData.evidenceId} not found.` };
       }
 
-      // Find the last event for this evidence item to chain previousEventId
       const evidenceEvents = custodyEvents.filter(e => e.evidenceId === eventData.evidenceId);
       const lastEvent = evidenceEvents.length > 0 ? evidenceEvents[evidenceEvents.length - 1] : null;
 
@@ -256,28 +545,41 @@ export const ForensicsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         evidenceName: targetEvidence.name,
         timestamp,
         previousEventId: lastEvent ? lastEvent.id : null,
+        ownerUid: user?.uid,
       };
 
-      // Update current custodian and location on evidence record
-      setEvidences(prev =>
-        prev.map(item => {
-          if (item.id === eventData.evidenceId) {
-            return {
-              ...item,
-              currentCustodian: eventData.toInvestigator,
-              storageLocation: eventData.location,
-            };
-          }
-          return item;
-        })
-      );
-
-      // Append event to linked list history
-      setCustodyEvents(prev => [...prev, newEvent]);
-
-      return { success: true, eventId: newEventId };
+      if (useCloudData && user) {
+        try {
+          // Write custody event document
+          await setDoc(doc(db, 'custody_events', newEventId), newEvent);
+          // Update evidence current custodian and location
+          await updateDoc(doc(db, 'evidence', eventData.evidenceId), {
+            currentCustodian: eventData.toInvestigator,
+            storageLocation: eventData.location,
+            updatedAt: timestamp,
+          });
+          return { success: true, eventId: newEventId };
+        } catch (err: any) {
+          handleFirestoreError(err, OperationType.CREATE, `custody_events/${newEventId}`);
+        }
+      } else {
+        setLocalEvidences(prev =>
+          prev.map(item => {
+            if (item.id === eventData.evidenceId) {
+              return {
+                ...item,
+                currentCustodian: eventData.toInvestigator,
+                storageLocation: eventData.location,
+              };
+            }
+            return item;
+          })
+        );
+        setLocalCustodyEvents(prev => [...prev, newEvent]);
+        return { success: true, eventId: newEventId };
+      }
     },
-    [evidences, custodyEvents]
+    [evidences, custodyEvents, useCloudData, user]
   );
 
   /**
@@ -285,7 +587,7 @@ export const ForensicsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
    * Compares stored SHA-256 against computed SHA-256
    */
   const verifyEvidenceIntegrity = useCallback(
-    (
+    async (
       evidenceId: string,
       computedHash: string,
       comparisonSource: string,
@@ -312,21 +614,9 @@ export const ForensicsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         examiner,
         mismatchIndex: comparison.mismatchIndices[0],
         comparisonSource,
+        ownerUid: user?.uid,
       };
 
-      // Update evidence verification status
-      setEvidences(prev =>
-        prev.map(e =>
-          e.id === evidenceId
-            ? { ...e, lastVerificationStatus: status, lastVerifiedTimestamp: timestamp }
-            : e
-        )
-      );
-
-      // Append verification log
-      setVerificationLogs(prev => [newLog, ...prev]);
-
-      // Append VERIFIED or TAMPER-DETECTED event to Custody Linked List
       const eventId = `EVT-${Date.now().toString().slice(-6)}`;
       const custodyEvt: CustodyEvent = {
         id: eventId,
@@ -342,10 +632,33 @@ export const ForensicsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         timestamp,
         hashAtEvent: computedHash.trim().toLowerCase(),
         previousEventId: null,
+        ownerUid: user?.uid,
         notes: `Verification Source: ${comparisonSource} | Examiner: ${examiner}`,
       };
 
-      setCustodyEvents(prev => [...prev, custodyEvt]);
+      if (useCloudData && user) {
+        try {
+          await setDoc(doc(db, 'verification_logs', logId), newLog);
+          await setDoc(doc(db, 'custody_events', eventId), custodyEvt);
+          await updateDoc(doc(db, 'evidence', evidenceId), {
+            lastVerificationStatus: status,
+            lastVerifiedTimestamp: timestamp,
+            updatedAt: timestamp,
+          });
+        } catch (err: any) {
+          handleFirestoreError(err, OperationType.WRITE, `verification_logs/${logId}`);
+        }
+      } else {
+        setLocalEvidences(prev =>
+          prev.map(e =>
+            e.id === evidenceId
+              ? { ...e, lastVerificationStatus: status, lastVerifiedTimestamp: timestamp }
+              : e
+          )
+        );
+        setLocalVerificationLogs(prev => [newLog, ...prev]);
+        setLocalCustodyEvents(prev => [...prev, custodyEvt]);
+      }
 
       return {
         isMatch: comparison.isMatch,
@@ -355,12 +668,11 @@ export const ForensicsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         logId,
       };
     },
-    [evidences]
+    [evidences, useCloudData, user]
   );
 
   /**
    * Search by exact SHA-256 in the Binary Search Tree
-   * Returns matching evidences and the exact search steps / path taken through the BST!
    */
   const searchByHashInBST = useCallback(
     (targetHash: string) => {
@@ -379,11 +691,11 @@ export const ForensicsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   );
 
   /**
-   * Global multi-criteria search (ID, name, case, investigator, or hash)
+   * Global multi-criteria search
    */
   const searchAll = useCallback(
-    (query: string) => {
-      const q = query.trim().toLowerCase();
+    (queryStr: string) => {
+      const q = queryStr.trim().toLowerCase();
       if (!q) return evidences;
 
       return evidences.filter(
@@ -425,13 +737,13 @@ export const ForensicsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   );
 
   /**
-   * Reset all records to initial fictional university demo data
+   * Reset local records to initial fictional university demo data
    */
   const resetToDemoData = useCallback(() => {
-    setEvidences(INITIAL_EVIDENCES);
-    setCustodyEvents(INITIAL_CUSTODY_EVENTS);
+    setLocalEvidences(INITIAL_EVIDENCES);
+    setLocalCustodyEvents(INITIAL_CUSTODY_EVENTS);
     setEvidenceTree(INITIAL_EVIDENCE_TREE);
-    setVerificationLogs(INITIAL_VERIFICATION_LOGS);
+    setLocalVerificationLogs(INITIAL_VERIFICATION_LOGS);
     localStorage.removeItem(STORAGE_KEYS.EVIDENCES);
     localStorage.removeItem(STORAGE_KEYS.CUSTODY);
     localStorage.removeItem(STORAGE_KEYS.TREE);
@@ -442,9 +754,9 @@ export const ForensicsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
    * Clear all records
    */
   const clearAllData = useCallback(() => {
-    setEvidences([]);
-    setCustodyEvents([]);
-    setVerificationLogs([]);
+    setLocalEvidences([]);
+    setLocalCustodyEvents([]);
+    setLocalVerificationLogs([]);
     setEvidenceTree({
       id: 'root-empty',
       name: 'Primary Evidence Store (Empty)',
@@ -462,13 +774,15 @@ export const ForensicsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       version: '1.0',
       exportTimestamp: new Date().toISOString(),
       disclaimer: 'FICTIONAL ACADEMIC RESEARCH DEMO DATA - Ajeenkya DY Patil University',
+      isCloudBackend: useCloudData,
+      userEmail: user?.email || null,
       evidences,
       custodyEvents,
       evidenceTree,
       verificationLogs,
     };
     return JSON.stringify(payload, null, 2);
-  }, [evidences, custodyEvents, evidenceTree, verificationLogs]);
+  }, [evidences, custodyEvents, evidenceTree, verificationLogs, useCloudData, user]);
 
   /**
    * Import database from JSON
@@ -479,10 +793,10 @@ export const ForensicsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       if (!Array.isArray(data.evidences) || !Array.isArray(data.custodyEvents)) {
         return { success: false, error: 'Invalid JSON schema: Missing evidences or custodyEvents arrays.' };
       }
-      setEvidences(data.evidences);
-      setCustodyEvents(data.custodyEvents);
+      setLocalEvidences(data.evidences);
+      setLocalCustodyEvents(data.custodyEvents);
       if (data.evidenceTree) setEvidenceTree(data.evidenceTree);
-      if (Array.isArray(data.verificationLogs)) setVerificationLogs(data.verificationLogs);
+      if (Array.isArray(data.verificationLogs)) setLocalVerificationLogs(data.verificationLogs);
       return { success: true };
     } catch (e: any) {
       return { success: false, error: e.message || 'JSON parse error' };
@@ -490,6 +804,16 @@ export const ForensicsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, []);
 
   const value = {
+    user,
+    authLoading,
+    isCloudMode,
+    setIsCloudMode,
+    signInWithGoogle,
+    signOut,
+    firestoreConnected,
+    cloudSyncLoading,
+    syncError,
+    seedCloudWithDemoData,
     evidences,
     custodyEvents,
     evidenceTree,

@@ -1,0 +1,140 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ==========================================
+    // 0. GLOBAL DEFAULT DENY CATCH-ALL
+    // ==========================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ==========================================
+    // 1. REUSABLE PRIMITIVE HELPERS
+    // ==========================================
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'ayushrai302600@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isOwner(ownerUid) {
+      return isSignedIn() && (request.auth.uid == ownerUid || isAdmin());
+    }
+
+    function isValidHash(hash) {
+      return hash is string && hash.size() == 64 && hash.matches('^[0-9a-fA-F]{64}$');
+    }
+
+    // ==========================================
+    // 2. USER PROFILES
+    // ==========================================
+    match /users/{userId} {
+      allow get: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isSignedIn() && request.auth.uid == userId &&
+        isValidId(userId) &&
+        incoming().uid == request.auth.uid &&
+        incoming().email is string &&
+        incoming().email.size() <= 200;
+      allow update: if isSignedIn() && request.auth.uid == userId &&
+        incoming().uid == existing().uid &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'badgeNumber', 'role', 'updatedAt']);
+      allow delete: if false;
+    }
+
+    // ==========================================
+    // 3. EVIDENCE REGISTRY
+    // ==========================================
+    match /evidence/{evidenceDocId} {
+      allow get: if isOwner(resource.data.ownerUid);
+      allow list: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
+      
+      allow create: if isSignedIn() &&
+        isValidId(evidenceDocId) &&
+        incoming().ownerUid == request.auth.uid &&
+        incoming().id is string && incoming().id.size() <= 64 &&
+        incoming().caseId is string && incoming().caseId.size() <= 64 &&
+        incoming().name is string && incoming().name.size() <= 256 &&
+        incoming().type is string && incoming().type.size() <= 64 &&
+        isValidHash(incoming().originalHash);
+
+      // Only allow updating non-immutable custody and verification state fields
+      allow update: if isOwner(resource.data.ownerUid) &&
+        incoming().ownerUid == existing().ownerUid &&
+        incoming().id == existing().id &&
+        incoming().originalHash == existing().originalHash &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'currentCustodian',
+          'storageLocation',
+          'notes',
+          'lastVerifiedTimestamp',
+          'lastVerificationStatus',
+          'updatedAt'
+        ]);
+
+      allow delete: if isOwner(resource.data.ownerUid);
+    }
+
+    // ==========================================
+    // 4. CHRONOLOGICAL CHAIN OF CUSTODY LEDGER
+    // Strictly Append-Only (Past events immutable)
+    // ==========================================
+    match /custody_events/{eventId} {
+      allow get: if isOwner(resource.data.ownerUid);
+      allow list: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
+      
+      allow create: if isSignedIn() &&
+        isValidId(eventId) &&
+        incoming().ownerUid == request.auth.uid &&
+        incoming().id is string && incoming().id.size() <= 64 &&
+        incoming().evidenceId is string && incoming().evidenceId.size() <= 64 &&
+        incoming().action is string && incoming().action.size() <= 32 &&
+        incoming().toInvestigator is string && incoming().toInvestigator.size() <= 128 &&
+        isValidHash(incoming().hashAtEvent);
+
+      // Historical events can NEVER be updated (Strict Append-Only Invariant)
+      allow update: if false;
+
+      // Only administrators can purge events during testing; regular examiners cannot delete history
+      allow delete: if isAdmin();
+    }
+
+    // ==========================================
+    // 5. INTEGRITY VERIFICATION LOGS
+    // ==========================================
+    match /verification_logs/{logId} {
+      allow get: if isOwner(resource.data.ownerUid);
+      allow list: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+        isValidId(logId) &&
+        incoming().ownerUid == request.auth.uid &&
+        incoming().evidenceId is string && incoming().evidenceId.size() <= 64 &&
+        incoming().status is string && (incoming().status == 'VERIFIED' || incoming().status == 'TAMPERED') &&
+        isValidHash(incoming().storedHash) &&
+        isValidHash(incoming().computedHash);
+
+      // Verification audit entries are immutable
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+  }
+}

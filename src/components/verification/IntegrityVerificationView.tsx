@@ -98,29 +98,33 @@ export const IntegrityVerificationView: React.FC<IntegrityVerificationViewProps>
   };
 
   // Run the core comparison
-  const runComparison = (hashToTest: string, sourceDesc: string) => {
+  const runComparison = async (hashToTest: string, sourceDesc: string) => {
     if (!selectedEvidence) return;
 
     const cleanComputed = hashToTest.trim().toLowerCase();
     const comparison = compareHashes(selectedEvidence.originalHash, cleanComputed);
 
-    // Save to context and append verification event to custody linked list
-    verifyEvidenceIntegrity(
-      selectedEvidence.id,
-      cleanComputed,
-      sourceDesc || comparisonSource,
-      examinerName
-    );
+    try {
+      // Save to context and append verification event to custody linked list & Firestore
+      await verifyEvidenceIntegrity(
+        selectedEvidence.id,
+        cleanComputed,
+        sourceDesc || comparisonSource,
+        examinerName
+      );
 
-    setVerificationResult({
-      run: true,
-      isMatch: comparison.isMatch,
-      storedHash: selectedEvidence.originalHash,
-      computedHash: cleanComputed,
-      matchPercentage: comparison.matchPercentage,
-      mismatchIndices: comparison.mismatchIndices,
-      timestamp: new Date().toISOString(),
-    });
+      setVerificationResult({
+        run: true,
+        isMatch: comparison.isMatch,
+        storedHash: selectedEvidence.originalHash,
+        computedHash: cleanComputed,
+        matchPercentage: comparison.matchPercentage,
+        mismatchIndices: comparison.mismatchIndices,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      console.error('Verification recording error:', err);
+    }
   };
 
   // Quick test: simulate legitimate match

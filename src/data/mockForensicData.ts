@@ -141,6 +141,27 @@ export const INITIAL_EVIDENCES: Evidence[] = [
     lastVerifiedTimestamp: '2026-10-22T09:20:00.000Z',
     lastVerificationStatus: 'VERIFIED',
   },
+  {
+    id: 'EVD-2026-107',
+    caseId: 'CASE-CR-2026-8912',
+    caseName: 'Operation Dark Ledger (Corporate Cyber Intrusion)',
+    name: 'investigator_interview_transcript.txt',
+    type: 'Text File',
+    originalHash: 'd5a3f29b4e7c1089a6b245e31fa2d4889c1056ef7842ab90123456789abcdef0',
+    hashAlgorithm: 'SHA-256',
+    fileSizeBytes: 14850, // 14.8 KB
+    collectionTimestamp: '2026-10-20T11:30:00.000Z',
+    collectionLocation: 'Digital Forensics Lab Workstation #3, Pune',
+    investigatorName: 'Ayush Rai',
+    investigatorBadge: 'DFIR-8821',
+    seizureAuthority: 'Court Search Warrant #SW-2026-441A',
+    storageLocation: 'Secure Evidence Safe Locker #1A',
+    currentCustodian: 'Ayush Rai',
+    notes: 'Academic demo evidence: Raw UTF-8 text transcript of suspect debriefing notes.',
+    isFictionalDemo: true,
+    lastVerifiedTimestamp: '2026-10-23T10:15:00.000Z',
+    lastVerificationStatus: 'VERIFIED',
+  },
 ];
 
 export const INITIAL_CUSTODY_EVENTS: CustodyEvent[] = [
@@ -278,6 +299,21 @@ export const INITIAL_CUSTODY_EVENTS: CustodyEvent[] = [
     previousEventId: 'EVT-005',
     signatureReference: 'SIG-VERIFY-OK-101',
     notes: 'Hash check: 8a91bc72... == 8a91bc72... (STATUS: VERIFIED - ZERO TAMPERING).',
+  },
+  {
+    id: 'EVT-010',
+    evidenceId: 'EVD-2026-107',
+    evidenceName: 'investigator_interview_transcript.txt',
+    action: 'COLLECTED',
+    fromInvestigator: 'Digital Forensics Unit',
+    toInvestigator: 'Ayush Rai (Lead Examiner)',
+    purpose: 'Initial intake of raw ASCII/UTF-8 investigator debriefing transcript for case file.',
+    location: 'Digital Forensics Lab Workstation #3, Pune',
+    timestamp: '2026-10-20T11:30:00.000Z',
+    hashAtEvent: 'd5a3f29b4e7c1089a6b245e31fa2d4889c1056ef7842ab90123456789abcdef0',
+    previousEventId: null,
+    signatureReference: 'SIG-AR-TEXT-107',
+    notes: 'FIPS 180-4 SHA-256 baseline computed on intake. File preserved in read-only forensic repository.',
   },
 ];
 

@@ -21,7 +21,8 @@ export type EvidenceType =
   | 'Document'
   | 'Mobile Extraction'
   | 'Binary / Executable'
-  | 'Database Dump';
+  | 'Database Dump'
+  | 'Text File';
 
 export type VerificationStatus = 'VERIFIED' | 'TAMPERED' | 'UNVERIFIED';
 
@@ -46,6 +47,7 @@ export interface Evidence {
   currentCustodian: string;
   notes: string;
   isFictionalDemo: boolean;
+  ownerUid?: string; // Firebase Auth UID
   lastVerifiedTimestamp?: string;
   lastVerificationStatus?: VerificationStatus;
   treeNodeId?: string; // Link to Evidence Tree
@@ -68,6 +70,7 @@ export interface CustodyEvent {
   previousEventId?: string | null;
   signatureReference?: string;
   notes?: string;
+  ownerUid?: string;
 }
 
 /**
@@ -134,4 +137,6 @@ export interface VerificationLog {
   examiner: string;
   mismatchIndex?: number;
   comparisonSource: string; // e.g. "Uploaded file: suspect_disk.img"
+  ownerUid?: string;
 }
+

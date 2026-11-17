@@ -239,6 +239,48 @@ export const AboutDefenseView: React.FC = () => {
         </div>
       </div>
 
+      {/* Backend & Cloud Architecture */}
+      <div className="p-5 rounded-lg bg-slate-900/80 border border-slate-800 space-y-4">
+        <div className="flex items-center gap-2">
+          <Database className="w-4 h-4 text-cyan-400" />
+          <h2 className="text-sm font-semibold text-white uppercase tracking-wider">
+            Cloud Firestore & Authentication Architecture
+          </h2>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+          <div className="p-3.5 rounded bg-slate-950 border border-slate-800 space-y-1.5">
+            <div className="font-bold text-white flex items-center justify-between">
+              <span>Cloud Firestore Database</span>
+              <span className="text-[10px] text-emerald-400 font-mono">DEPLOYED & ACTIVE</span>
+            </div>
+            <div className="text-[11px] text-slate-400">
+              Database ID: <code className="text-cyan-300">ai-studio-dsldigitalforens...</code>
+            </div>
+            <div className="text-[11px] text-slate-400">
+              Collections: <code className="text-slate-300">/evidence</code>, <code className="text-slate-300">/custody_events</code>, <code className="text-slate-300">/verification_logs</code>, <code className="text-slate-300">/users</code>
+            </div>
+          </div>
+
+          <div className="p-3.5 rounded bg-slate-950 border border-slate-800 space-y-1.5">
+            <div className="font-bold text-white flex items-center justify-between">
+              <span>Authentication & Zero-Trust Rules</span>
+              <span className="text-[10px] text-cyan-400 font-mono">RULE PROTECTED</span>
+            </div>
+            <div className="text-[11px] text-slate-400">
+              Identity Provider: Google Sign-In (<code className="text-slate-300">signInWithPopup</code>)
+            </div>
+            <div className="text-[11px] text-slate-400">
+              Security Model: Owner isolation by <code className="text-cyan-300">request.auth.uid</code> with append-only custody enforcement.
+            </div>
+          </div>
+        </div>
+
+        <div className="p-3 rounded bg-slate-950 border border-slate-800/80 text-[11px] text-slate-400 leading-relaxed">
+          <strong className="text-slate-200">Secure File Storage Policy:</strong> Forensics disk images and PCAP files often exceed gigabytes. Storing them as Base64 strings directly in Firestore violates the strict 1 MB document threshold. This system calculates genuine SHA-256 fingerprints directly from file bytes using the Web Crypto API, storing only the cryptographic hashes, custody events, and metadata in Firestore, with raw files secured in dedicated immutable object buckets.
+        </div>
+      </div>
+
       {/* Storage & Backup Management */}
       <div className="p-5 rounded-lg bg-slate-900/80 border border-slate-800 space-y-4">
         <div className="flex items-center gap-2">

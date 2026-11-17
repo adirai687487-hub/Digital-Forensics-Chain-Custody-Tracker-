@@ -1,0 +1,102 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "Examiner or investigator user profile in the forensics system.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "email": { "type": "string", "description": "Examiner email address" },
+        "displayName": { "type": "string", "description": "Examiner full name" },
+        "badgeNumber": { "type": "string", "description": "Investigator badge or credential number" },
+        "role": { "type": "string", "description": "System role (examiner, analyst, admin)" },
+        "createdAt": { "type": "string", "description": "ISO timestamp of account creation" }
+      },
+      "required": ["uid", "email", "createdAt"]
+    },
+    "Evidence": {
+      "title": "Forensic Evidence",
+      "description": "Seized digital forensic evidence artifact with baseline cryptographic fingerprint.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique evidence ID (e.g. EVD-2026-101)" },
+        "caseId": { "type": "string", "description": "Associated criminal or incident response case ID" },
+        "caseName": { "type": "string", "description": "Title or descriptive operation name" },
+        "name": { "type": "string", "description": "Artifact filename or device descriptor" },
+        "type": { "type": "string", "description": "Forensic type (Text File, Disk Image, Memory Dump, PCAP, etc.)" },
+        "originalHash": { "type": "string", "description": "64-character SHA-256 hex string" },
+        "hashAlgorithm": { "type": "string", "description": "Cryptographic hashing standard (SHA-256)" },
+        "fileSizeBytes": { "type": "number", "description": "File or image size in bytes" },
+        "collectionTimestamp": { "type": "string", "description": "ISO timestamp of physical seizure" },
+        "collectionLocation": { "type": "string", "description": "Physical scene or server location of collection" },
+        "investigatorName": { "type": "string", "description": "Name of the seizing officer" },
+        "investigatorBadge": { "type": "string", "description": "Badge ID of seizing officer" },
+        "seizureAuthority": { "type": "string", "description": "Warrant number or incident response mandate" },
+        "storageLocation": { "type": "string", "description": "Physical evidence locker or secure vault reference" },
+        "currentCustodian": { "type": "string", "description": "Current assigned custodian" },
+        "notes": { "type": "string", "description": "Acquisition and write-blocker notes" },
+        "ownerUid": { "type": "string", "description": "Firebase Auth UID of the owning investigator" },
+        "lastVerificationStatus": { "type": "string", "description": "VERIFIED, TAMPERED, or UNVERIFIED" },
+        "lastVerifiedTimestamp": { "type": "string", "description": "ISO timestamp of last integrity check" }
+      },
+      "required": ["id", "caseId", "name", "type", "originalHash", "ownerUid"]
+    },
+    "CustodyEvent": {
+      "title": "Chain of Custody Event",
+      "description": "Chronological transfer, examination, or integrity event node in the linked chain of custody.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Event ID (e.g. EVT-1001)" },
+        "evidenceId": { "type": "string", "description": "Linked evidence item ID" },
+        "evidenceName": { "type": "string", "description": "Artifact name at event" },
+        "action": { "type": "string", "description": "COLLECTED, TRANSFERRED, ANALYZED, STORED, VERIFIED, RELEASED, DISPOSED" },
+        "fromInvestigator": { "type": "string", "description": "Releasing party name" },
+        "toInvestigator": { "type": "string", "description": "Receiving custodian name" },
+        "purpose": { "type": "string", "description": "Operational reason for custody transfer" },
+        "location": { "type": "string", "description": "Destination facility, station, or vault" },
+        "timestamp": { "type": "string", "description": "ISO timestamp of custody change" },
+        "hashAtEvent": { "type": "string", "description": "SHA-256 fingerprint snapshot at transfer" },
+        "previousEventId": { "type": "string", "description": "Predecessor event ID in the chronological chain" },
+        "notes": { "type": "string", "description": "Tamper-evident seal number or physical observations" },
+        "ownerUid": { "type": "string", "description": "Firebase Auth UID of the recording investigator" }
+      },
+      "required": ["id", "evidenceId", "action", "toInvestigator", "hashAtEvent", "ownerUid"]
+    },
+    "VerificationLog": {
+      "title": "Integrity Verification Log",
+      "description": "Cryptographic audit trail log of a hash verification check.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Verification audit log ID" },
+        "evidenceId": { "type": "string", "description": "Verified evidence ID" },
+        "evidenceName": { "type": "string", "description": "Verified artifact name" },
+        "storedHash": { "type": "string", "description": "Baseline registered SHA-256 hash" },
+        "computedHash": { "type": "string", "description": "Newly computed SHA-256 hash from file bytes" },
+        "timestamp": { "type": "string", "description": "ISO timestamp of verification run" },
+        "status": { "type": "string", "description": "VERIFIED or TAMPERED" },
+        "examiner": { "type": "string", "description": "Name of verifying examiner" },
+        "comparisonSource": { "type": "string", "description": "Source of comparison file or mirror stream" },
+        "ownerUid": { "type": "string", "description": "Firebase Auth UID of the verifying investigator" }
+      },
+      "required": ["id", "evidenceId", "storedHash", "computedHash", "status", "ownerUid"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "entities.UserProfile" },
+      "description": "User profile records for registered investigators."
+    },
+    "/evidence/{evidenceDocId}": {
+      "schema": { "$ref": "entities.Evidence" },
+      "description": "Forensic evidence items cataloged by investigators."
+    },
+    "/custody_events/{eventId}": {
+      "schema": { "$ref": "entities.CustodyEvent" },
+      "description": "Chronological chain of custody transfer ledger events."
+    },
+    "/verification_logs/{logId}": {
+      "schema": { "$ref": "entities.VerificationLog" },
+      "description": "Cryptographic integrity verification logs and audit entries."
+    }
+  }
+}
